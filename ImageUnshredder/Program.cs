@@ -1,5 +1,5 @@
 ﻿// --------------------------------------------------------------------------------------------------------------------
-// <copyright file="Program.cs" company="">
+// <copyright file="Program.cs" company="http://gshahine.com">
 //   Guy Shahine. All rights reserved
 // </copyright>
 // <summary>
@@ -13,6 +13,8 @@ namespace ImageUnshredder
     using System.Diagnostics;
     using System.Drawing;
     using System.Linq;
+    using System.Threading;
+    using System.Threading.Tasks;
 
     /// <summary>
     /// Image unshredder program
@@ -23,6 +25,11 @@ namespace ImageUnshredder
         ///  The predefined chunk size is 32 pixels
         /// </summary>
         private const int ChunkSize = 32;
+
+        /// <summary>
+        /// Used to lock reads to image when computing score
+        /// </summary>
+        private static object scoreLockObject = new object();
 
         /// <summary>
         /// Program entry point
@@ -47,37 +54,51 @@ namespace ImageUnshredder
         /// <param name="outputFilePath">The path to the result image</param>
         private static void Unshred(string inputFilePath, string outputFilePath)
         {
-            var image = new Bitmap(inputFilePath);
-            var scores = new List<List<int>>();
+            var sp = Stopwatch.StartNew();
+            var image = new Bitmap("TokyoPanoramaShredded.png");
             var topScores = new List<int>();
 
-            for (int i = 0; i < image.Width / ChunkSize; ++i)
-            {
-                scores.Add(new List<int>());
+            int chunks = image.Width / ChunkSize;
+            var scoreTasks = new Task<List<int>>[chunks];
 
-                for (int j = 0; j < image.Width / ChunkSize; ++j)
+            for (int i = 0; i < chunks; ++i)
+            {
+                int captured = i;
+                scoreTasks[i] = Task.Factory.StartNew<List<int>>(() =>
                 {
-                    if (i == j)
+                    var s = new List<int>();
+
+                    for (int j = 0; j < chunks; ++j)
                     {
-                        scores[i].Add(-1);
-                        continue;
+                        if (captured == j)
+                        {
+                            s.Add(-1);
+                            continue;
+                        }
+
+                        s.Add(GetScore(image, captured * ChunkSize, (j * ChunkSize) + 31));
                     }
 
-                    scores[i].Add(GetScore(image, i * ChunkSize, (j * ChunkSize) + 31));
-                }
+                    return s;
+                });
+            }
 
-                topScores.Add(scores[i].IndexOf(scores[i].Max()));
+            Task.WaitAll(scoreTasks);
+
+            for (int i = 0; i < chunks; ++i)
+            {
+                topScores.Add(scoreTasks[i].Result.IndexOf(scoreTasks[i].Result.Max()));
             }
 
             // output image
             var output = new Bitmap(image.Width, image.Height, image.PixelFormat);
 
-            var sum = scores.Select(s => s.Sum()).ToList();
+            var sum = scoreTasks.Select(s => s.Result.Sum()).ToList();
 
             int currentChunk = sum.IndexOf(sum.Min());
             topScores[currentChunk] = -1;
 
-            for (int i = 0; i < image.Width / ChunkSize; ++i)
+            for (int i = 0; i < chunks; ++i)
             {
                 CopyChunk(image, output, currentChunk, i);
                 currentChunk = topScores.IndexOf(currentChunk);
@@ -97,6 +118,7 @@ namespace ImageUnshredder
         {
             int hits = 0;
 
+            Monitor.Enter(scoreLockObject);
             for (int j = 0; j < image.Height; ++j)
             {
                 Color leftPixel = image.GetPixel(left, j);
@@ -107,6 +129,7 @@ namespace ImageUnshredder
                     ++hits;
                 }
             }
+            Monitor.Exit(scoreLockObject);
 
             return hits;
         }

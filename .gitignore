@@ -1,0 +1,14 @@
+# use glob syntax
+syntax: glob
+
+*.suo
+*.user
+*/obj/*
+*/bin/*
+TestResults/*
+Local.testsettings
+output
+*/Temp/*
+
+# switch to regexp syntax
+syntax: regexp
